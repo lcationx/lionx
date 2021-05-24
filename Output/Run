@@ -1,0 +1,5 @@
+#!/bin/tcsh -f
+rm -rf *log*
+unlimit core
+./$1 >&! System.$1.log &
+
