@@ -1,0 +1,188 @@
+######################################################################
+#		argument
+######################################################################
+
+# current dir.
+CURRENT_DIR := $(shell pwd)
+CURRENT := $(notdir $(CURRENT_DIR))
+
+# specify make tag & depend.
+DEPS =
+ifeq "$(MAKECMDGOALS)" ""
+	MAKECMDGOALS = all
+	DEPS := $(SRC:.cc=.d)
+endif
+
+# include generate clean dirs.
+CLEAN_DIR := $(addsuffix _clean_, $(TARGETS))
+
+# set make argument.
+ifeq (1, $(SD_DEBUG))
+	OPTIMIZE_LEVEL := -g -pipe
+	OUTPUT_OPT += -DSD_DEBUG
+endif
+
+ifeq (1, $(STATIC))
+	OUTPUT_OPT += -static
+	SYSLIBS += gcc ssl crypto stdc++ rt
+else
+	SYSLIBS += gcc ssl crypto stdc++ rt
+endif
+
+ifeq (1, $(X64))
+	OUTPUT_OPT += -m64
+else
+	OUTPUT_OPT += -m32
+endif
+
+ifeq (1, $(SD_SSE))
+	OUTPUT_OPT += -march=native -DSD_SSE
+endif
+
+ifeq (1, $(SD_ASSERT))
+	OUTPUT_OPT += -DSD_ASSERT=1
+else ifeq (2, $(SD_ASSERT))
+	OUTPUT_OPT += -DSD_ASSERT=2
+else
+	OUTPUT_OPT += -DSD_ASSERT=0
+endif
+
+ifeq (1, $(WERROR))
+	OUTPUT_OPT += -Werror
+endif
+
+ifeq (1, $(SD_PROTOBUF))
+	SYSINCLUDE += /usr/local/protobuf/include
+	SYSLIBS += protobuf
+	SYSLIBDIRS += /usr/local/protobuf/lib
+	OUTPUT_OPT += -DSD_PROTOBUF
+endif
+
+ifeq (1, $(CX14))
+	CC = g++ -std=c++14 -pthread
+else
+	CC = g++ -std=c++11 -pthread
+endif
+
+ifeq (1, $(SD_POSTGRESQL))
+	SYSINCLUDE += /usr/local/postgresql/include
+	SYSLIBS += pq
+	SYSLIBDIRS += /usr/local/postgresql/lib
+	OUTPUT_OPT += -DSD_POSTGRESQL
+endif
+
+ifeq (1, $(SD_LOG_CALLSTACK))
+	OUTPUT_OPT += -DSD_LOG_CALLSTACK
+endif
+
+ifeq (1, $(SD_REDIS))
+	SYSINCLUDE += /usr/include/hiredis
+	SYSLIBS += hiredis
+	OUTPUT_OPT += -DSD_REDIS
+endif
+
+ifeq (1, $(SD_MONGODB))
+	SYSINCLUDE += /usr/local/include/bsoncxx/v_noabi /usr/local/include/mongocxx/v_noabi
+	SYSLIBS += bsoncxx mongocxx
+	OUTPUT_OPT += -DSD_MONGODB
+endif
+
+ifneq "$(CPU)" ""
+	CPU := $(addprefix -march=, $(CPU))
+	OUTPUT_OPT += $(CPU)
+endif
+
+# set link.
+ifeq (1, $(STATIC))
+	SYSLIBS := $(addprefix -l:lib, $(SYSLIBS)) 
+	SYSLIBS := $(addsuffix .a, $(SYSLIBS))
+else
+	SYSLIBS := $(addprefix -l, $(SYSLIBS))
+endif
+
+SYSLIBDIRS := $(addprefix -L, $(SYSLIBDIRS))
+SYSINCLUDE := $(addprefix -I, $(SYSINCLUDE))
+INCLUDE := $(addprefix -I, $(INCLUDE))
+LIBDIRS := $(addprefix -L, $(LIBDIRS))
+LIBS := $(addprefix -l, $(LIBS))
+DEFINES := $(addprefix -D, $(DEFINES))	
+
+LIBS := -Wl,--start-group $(LIBS)
+SYSLIBS := $(SYSLIBS) -Wl,--end-group
+
+
+# specifies compiled file.
+OBJS := $(SRC:.cc=.o)
+
+# set output commands.
+OUT_COMMAND =
+TARGET := $(CURRENT)
+ifeq (1, $(ARCHIVER))
+	TARGET := $(addprefix lib, $(addsuffix .a, $(TARGET)))
+	ifneq "$(OUTDIR)" ""
+		TARGET := $(addsuffix $(TARGET), $(OUTDIR))
+	endif
+	OUT_COMMAND := $(AR) $(TARGET) $(OBJS)
+else
+	ifneq "$(OUTDIR)" ""
+		TARGET := $(addsuffix $(TARGET), $(OUTDIR))
+	endif
+	OUT_COMMAND := $(CC) $(SYSINCLUDE) $(INCLUDE) $(RTTI_OPT) $(OPTIMIZE_LEVEL) $(OUTPUT_OPT)\
+		$(DEFINES) $(OBJS) $(SYSLIBDIRS) $(LIBDIRS) $(LIBS) $(SYSLIBS) -o $(TARGET)
+endif
+ifeq "$(SRC)" ""
+	OUT_COMMAND :=
+endif
+
+# gentrate start directory.
+ifeq "$(ORIGINAL)" ""
+	ORIGINAL := $(addsuffix /, $(shell pwd))
+endif
+
+######################################################################
+#		tags
+######################################################################
+
+all: $(TARGET)
+.PHONY: all
+
+sinclude $(DEPS)
+
+$(TARGETS):
+	if [	-f $(addsuffix /Makefile, $@)	]; then $(MAKE) -mj4 -C $@ ORIGINAL=$(ORIGINAL); fi
+.PHONY: $(TARGETS)
+
+$(TARGET): $(TARGETS) $(OBJS)
+	$ $(OUT_COMMAND)
+
+
+clean: $(CLEAN_DIR) clean-other-dirs
+	@rm -rf *.d *.o *.a *.exe *.TMP $(TARGET)
+.PHONY: clean
+
+$(CLEAN_DIR):
+	$(MAKE) -C $(patsubst %_clean_, %, $@) clean ORIGINAL=$(ORIGINAL);
+.PHONY: $(CLEAN_DIR)
+
+clean-other-dirs:
+	@for i in $(CLEAN);\
+		do cd $$i; rm -rf *.d *.o *.a *.exe *.TMP; cd $(CURRENT_DIR);\
+	done
+.PHONY: clean-other-dirs
+
+
+######################################################################
+#		rules
+######################################################################
+
+%.o:%.cc
+	$(CC) $(RTTI_OPT) $(OPTIMIZE_LEVEL) $(OUTPUT_OPT) $(SYSINCLUDE) $(INCLUDE) -c $< -o $@
+
+
+%.d:%.cc
+	$(CC) -MM $(RTTI_OPT) $(OPTIMIZE_LEVEL) $(OUTPUT_OPT) $(SYSINCLUDE) $(INCLUDE) $< > $@.$$$$; \
+	sed 's,\($(notdir $*)\)\.o[ :]*,\ $*.o $@ : ,g' < $@.$$$$ > $@; \
+	rm -f $@.$$$$;
+
+
+######################################################################
